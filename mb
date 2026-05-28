@@ -17,8 +17,7 @@ HEADERS = { 'Auth-Key': API_KEY }
 # --- Configuration GitHub ---
 # ⚠️ ATTENTION : Tu DOIS générer un Personal Access Token sur GitHub (Settings > Developer settings > Personal access tokens (classic))
 # Coche la case "repo" (Full control of private repositories) pour qu'il puisse uploader.
-GITHUB_TOKEN = "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 88888" # <-- Mets ton token ici entre les guillemets !
-
+GITHUB_TOKEN = "ghp_v2e70raloIOr4pe7I3HdIAXQaTmTjZ1ZgJ77Q" # <-- Mets ton token ici entre les guillemets !
 GITHUB_REPO = "AymaneLachhab/yes"
 GITHUB_BASE_PATH = "data_asm"
 
@@ -93,11 +92,18 @@ def upload_to_github(local_file_path, malware_class, filename):
     
     url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{github_path}"
     headers = {
-        "Authorization": f"token {GITHUB_TOKEN}",
+        "Authorization": f"Bearer {GITHUB_TOKEN.strip()}",
         "Accept": "application/vnd.github.v3+json"
     }
     
     try:
+        # Vérification de la taille (GitHub API limite l'upload de fichiers uniques)
+        # Certains malwares désassemblés génèrent des ASM gigantesques.
+        file_size_mb = os.path.getsize(local_file_path) / (1024 * 1024)
+        if file_size_mb > 45: # Limite arbitraire de sécurité à 45 Mo
+            print(f"        [-] Fichier ASM trop lourd pour GitHub API ({file_size_mb:.1f} MB). Ignoré.")
+            return False
+
         with open(local_file_path, "rb") as f:
             content = f.read()
         
@@ -254,9 +260,9 @@ def main():
                     # 2.5 Upload sur Github
                     if GITHUB_TOKEN:
                         upload_to_github(asm_path, malware_class, f"{sha256}.asm")
-                        # Vider le fichier localement pour libérer 100% de l'espace disque,
-                        # tout en gardant le fichier vide comme "marqueur" de réussite.
-                        open(asm_path, 'w').close()
+                        # Suppression totale du fichier ASM pour ne pas le garder localement
+                        if os.path.exists(asm_path):
+                            os.remove(asm_path)
                         
                     success_count += 1
             except Exception as e:
