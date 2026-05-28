@@ -3,6 +3,7 @@ import requests
 import pyzipper
 import time
 import sys
+import subprocess
 
 # ==========================================
 # CONFIGURATION
@@ -12,7 +13,7 @@ API_KEY = "5e5c24856d39b864896ef452436249a32024514c8f410f4d"
 API_URL = "https://mb-api.abuse.ch/api/v1/"
 HEADERS = { 'Auth-Key': API_KEY }
 
-# Nombre de samples à télécharger par famille
+# Nombre de samples à télécharger par famille/classe
 SAMPLES_PER_FAMILY = 500
 
 # Dossier principal où les malwares seront classés
@@ -35,12 +36,12 @@ CLASSES = [
 # FONCTIONS
 # ==========================================
 def get_hashes(malware_class, limit):
-    """Récupère une liste de hash SHA256 pour une CLASSE générale donnée (utilisation des tags)"""
-    print(f"[*] Recherche de {limit} samples pour la classe: {malware_class}...")
+    """Récupère une liste de hash SHA256 (Uniquement PE Windows) pour une CLASSE générale donnée"""
+    print(f"[*] Recherche de samples pour la classe: {malware_class} (Filtre PE Windows activé)...")
     data = {
-        'query': 'get_taginfo',  # <-- Changement ici : on cherche par TAG et non plus par signature exacte
+        'query': 'get_taginfo',
         'tag': malware_class,
-        'limit': limit
+        'limit': 1000  # On demande le max pour avoir de la marge après le filtrage
     }
     
     try:
@@ -48,8 +49,19 @@ def get_hashes(malware_class, limit):
         response_json = response.json()
         
         if response_json.get('query_status') == 'ok':
-            hashes = [item['sha256_hash'] for item in response_json.get('data', [])]
-            print(f"    [+] Trouvé {len(hashes)} samples.")
+            hashes = []
+            for item in response_json.get('data', []):
+                # Filtrer pour ne garder que les fichiers exécutables Windows (PE)
+                mime = item.get('file_type_mime', '').lower()
+                ftype = item.get('file_type', '').lower()
+                
+                if 'dosexec' in mime or ftype in ['exe', 'dll']:
+                    hashes.append(item['sha256_hash'])
+                    
+                if len(hashes) >= limit:
+                    break
+                    
+            print(f"    [+] Trouvé {len(hashes)} samples exécutables Windows (PE).")
             return hashes
         else:
             print(f"    [-] Erreur API ou aucun sample trouvé: {response_json.get('query_status')}")
@@ -102,6 +114,44 @@ def download_and_extract(sha256, output_dir):
         print(f"        [!] Erreur lors du téléchargement de {sha256}: {e}")
         return False
 
+def run_objdump(malware_class, class_dir):
+    """Exécute objdump sur les fichiers téléchargés et stocke les résultats"""
+    asm_dir = f"asm_{malware_class}"
+    if not os.path.exists(asm_dir):
+        os.makedirs(asm_dir)
+        
+    print(f"\n==================================================")
+    print(f"[*] ETAPE 2 : EXÉCUTION D'OBJDUMP")
+    print(f"==================================================")
+    
+    files = [f for f in os.listdir(class_dir) if os.path.isfile(os.path.join(class_dir, f))]
+    if not files:
+        print("[-] Aucun fichier à désassembler.")
+        return
+        
+    for idx, f in enumerate(files):
+        file_path = os.path.join(class_dir, f)
+        asm_path = os.path.join(asm_dir, f + ".asm")
+        
+        if os.path.exists(asm_path):
+            continue
+            
+        print(f"    [{idx+1}/{len(files)}] Désassemblage de {f}...")
+        try:
+            # Redirection des erreurs vers /dev/null pour éviter de polluer l'écran
+            # si objdump ne reconnaît pas le format du fichier (ex: script Python, archive, etc.)
+            cmd = f"objdump -d '{file_path}' > '{asm_path}' 2>/dev/null"
+            subprocess.run(cmd, shell=True)
+            
+            # Vérifier si objdump a échoué (fichier vide)
+            if os.path.exists(asm_path) and os.path.getsize(asm_path) == 0:
+                os.remove(asm_path)
+                print("        [-] Format non reconnu par objdump (ignoré).")
+        except Exception as e:
+            print(f"        [!] Erreur critique objdump: {e}")
+            
+    print(f"\n[+] Terminés ! Tous les fichiers ASM valides sont stockés dans le dossier : {os.path.abspath(asm_dir)}")
+
 # ==========================================
 # MAIN
 # ==========================================
@@ -109,41 +159,63 @@ def main():
     if not os.path.exists(OUTPUT_BASE_DIR):
         os.makedirs(OUTPUT_BASE_DIR)
 
-    total_downloaded = 0
-
-    for malware_class in CLASSES:
-        class_dir = os.path.join(OUTPUT_BASE_DIR, malware_class)
-        if not os.path.exists(class_dir):
-            os.makedirs(class_dir)
-            
-        hashes = get_hashes(malware_class, SAMPLES_PER_FAMILY)
+    print("\n==========================================")
+    print("      MALWARE DOWNLOADER & ANALYZER       ")
+    print("==========================================")
+    
+    # 1. Menu interactif
+    print("\nCatégories disponibles :")
+    for i, cls in enumerate(CLASSES):
+        print(f"[{i+1}] {cls}")
         
-        success_count = 0
-        for i, sha256 in enumerate(hashes):
-            print(f"    [{i+1}/{len(hashes)}] Téléchargement de {sha256}...")
-            
-            # Vérifier si on ne l'a pas déjà téléchargé
-            existing_files = [f for f in os.listdir(class_dir) if sha256 in f]
-            
-            if existing_files:
-                print("        [~] Déjà présent, on passe.")
-                success_count += 1
-                continue
-                
-            if download_and_extract(sha256, class_dir):
-                print("        [+] Succès.")
-                success_count += 1
-                total_downloaded += 1
-            
-            # Petite pause pour ne pas surcharger l'API
-            time.sleep(1)
-            
-        print(f"[*] Bilan pour la classe {malware_class} : {success_count} fichiers récupérés sur {len(hashes)}.\n")
-
+    try:
+        choix = input(f"\n>>> Choisissez le numéro de la catégorie (1-{len(CLASSES)}) : ")
+        idx = int(choix) - 1
+        if idx < 0 or idx >= len(CLASSES):
+            print("[-] Choix invalide.")
+            return
+    except ValueError:
+        print("[-] Veuillez entrer un numéro valide.")
+        return
+        
+    malware_class = CLASSES[idx]
+    print(f"\n[+] Vous avez sélectionné la catégorie : {malware_class.upper()}")
+    
+    class_dir = os.path.join(OUTPUT_BASE_DIR, malware_class)
+    if not os.path.exists(class_dir):
+        os.makedirs(class_dir)
+        
+    # 2. Téléchargement
+    print(f"\n==================================================")
+    print(f"[*] ETAPE 1 : TÉLÉCHARGEMENT DES SAMPLES")
     print(f"==================================================")
-    print(f"TERMINÉ ! Total de nouveaux samples téléchargés : {total_downloaded}")
-    print(f"Tous les fichiers sont rangés dans le dossier : {os.path.abspath(OUTPUT_BASE_DIR)}")
-    print(f"==================================================")
+    hashes = get_hashes(malware_class, SAMPLES_PER_FAMILY)
+    
+    if not hashes:
+        print("[-] Aucun sample trouvé. Fin du script.")
+        return
+        
+    success_count = 0
+    for i, sha256 in enumerate(hashes):
+        print(f"    [{i+1}/{len(hashes)}] Téléchargement de {sha256}...")
+        
+        existing_files = [f for f in os.listdir(class_dir) if sha256 in f]
+        
+        if existing_files:
+            print("        [~] Déjà présent, on passe.")
+            success_count += 1
+            continue
+            
+        if download_and_extract(sha256, class_dir):
+            print("        [+] Succès.")
+            success_count += 1
+        
+        time.sleep(1)
+        
+    print(f"\n[*] Bilan : {success_count} fichiers récupérés pour la classe {malware_class}.")
+    
+    # 3. Analyse avec objdump
+    run_objdump(malware_class, class_dir)
 
 if __name__ == "__main__":
     main()
