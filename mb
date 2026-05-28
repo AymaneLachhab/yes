@@ -226,10 +226,10 @@ def main():
             
         print(f"\n    [Progression : {success_count}/{SAMPLES_PER_FAMILY}] -> Sample {sha256}")
         
-        # Vérifier si on a déjà l'ASM pour ce malware
+        # Vérifier si on a déjà traité ce malware
         asm_path = os.path.join(asm_dir, f"{sha256}.asm")
-        if os.path.exists(asm_path) and os.path.getsize(asm_path) > 0:
-            print("        [~] L'analyse ASM existe déjà, on passe au suivant.")
+        if os.path.exists(asm_path):
+            print("        [~] L'analyse a déjà été faite (uploadée sur GitHub), on passe.")
             success_count += 1
             continue
             
@@ -253,8 +253,9 @@ def main():
                     # 2.5 Upload sur Github
                     if GITHUB_TOKEN:
                         upload_to_github(asm_path, malware_class, f"{sha256}.asm")
-                        # (Optionnel) Si tu veux supprimer le .asm de ta VM après l'avoir uploadé pour gagner de l'espace, décommente la ligne ci-dessous :
-                        # os.remove(asm_path)
+                        # Vider le fichier localement pour libérer 100% de l'espace disque,
+                        # tout en gardant le fichier vide comme "marqueur" de réussite.
+                        open(asm_path, 'w').close()
                         
                     success_count += 1
             except Exception as e:
