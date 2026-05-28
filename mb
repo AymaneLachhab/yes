@@ -259,12 +259,20 @@ def main():
                     
                     # 2.5 Upload sur Github
                     if GITHUB_TOKEN:
-                        upload_to_github(asm_path, malware_class, f"{sha256}.asm")
-                        # Suppression totale du fichier ASM pour ne pas le garder localement
+                        upload_success = upload_to_github(asm_path, malware_class, f"{sha256}.asm")
+                        
+                        # Si l'upload a échoué (souvent à cause de la taille > 45Mo), 
+                        # on ne compte PAS ce malware comme un succès, pour que la boucle 
+                        # en cherche un autre plus petit à la place.
+                        if upload_success:
+                            success_count += 1
+                        
+                        # Quoi qu'il arrive (succès ou fichier trop gros), on supprime le .asm
+                        # pour ne pas remplir le disque dur local de la VM.
                         if os.path.exists(asm_path):
                             os.remove(asm_path)
-                        
-                    success_count += 1
+                    else:
+                        success_count += 1
             except Exception as e:
                 print(f"        [!] Erreur objdump: {e}")
                 
