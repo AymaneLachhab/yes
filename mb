@@ -13,10 +13,10 @@ API_KEY = "5e5c24856d39b864896ef452436249a32024514c8f410f4d"
 API_URL = "https://mb-api.abuse.ch/api/v1/"
 HEADERS = { 'Auth-Key': API_KEY }
 
-# Nombre de samples à télécharger par famille/classe
+# Nombre de samples à traiter par famille/classe
 SAMPLES_PER_FAMILY = 100
 
-# Dossier principal où les malwares seront classés
+# Dossier temporaire pour les malwares (ils seront supprimés aussitôt)
 OUTPUT_BASE_DIR = "malware_samples"
 
 # Liste des Grandes Classes / Catégories générales (Tags)
@@ -45,7 +45,6 @@ def get_hashes(malware_class, limit):
     }
     
     try:
-        # Augmentation du timeout à 60 secondes car MalwareBazaar met du temps à renvoyer 1000 résultats
         response = requests.post(API_URL, data=data, headers=HEADERS, timeout=60)
         response_json = response.json()
         
@@ -59,9 +58,6 @@ def get_hashes(malware_class, limit):
                 if 'dosexec' in mime or ftype in ['exe', 'dll']:
                     hashes.append(item['sha256_hash'])
                     
-                if len(hashes) >= limit:
-                    break
-                    
             print(f"    [+] Trouvé {len(hashes)} samples exécutables Windows (PE).")
             return hashes
         else:
@@ -72,7 +68,7 @@ def get_hashes(malware_class, limit):
         return []
 
 def download_and_extract(sha256, output_dir):
-    """Télécharge le fichier ZIP chiffré depuis MalwareBazaar et l'extrait"""
+    """Télécharge le fichier ZIP depuis MalwareBazaar, l'extrait, et retourne le chemin complet du fichier extrait"""
     data = {
         'query': 'get_file',
         'sha256_hash': sha256
@@ -81,77 +77,41 @@ def download_and_extract(sha256, output_dir):
     try:
         response = requests.post(API_URL, data=data, headers=HEADERS, timeout=30)
         
-        # Vérification si le contenu est bien un ZIP (signature 'PK')
         if response.content.startswith(b'PK'):
             zip_path = os.path.join(output_dir, f"{sha256}.zip")
             
-            # Sauvegarde du fichier ZIP
             with open(zip_path, 'wb') as f:
                 f.write(response.content)
             
-            # Extraction du ZIP (le mot de passe MalwareBazaar est toujours 'infected')
             try:
+                extracted_file_path = None
                 with pyzipper.AESZipFile(zip_path) as zf:
+                    # Récupérer le nom interne du fichier
+                    file_names = zf.namelist()
+                    if file_names:
+                        extracted_file_path = os.path.join(output_dir, file_names[0])
+                    # Extraire
                     zf.extractall(path=output_dir, pwd=b'infected')
                 
-                # Suppression du ZIP une fois extrait pour gagner de la place
+                # Suppression du ZIP
                 os.remove(zip_path)
-                return True
+                return extracted_file_path
             except Exception as e:
-                print(f"        [!] Erreur d'extraction pour {sha256}: {e}")
+                print(f"        [!] Erreur d'extraction: {e}")
                 if os.path.exists(zip_path):
                     os.remove(zip_path)
-                return False
+                return None
         else:
-            # L'API a retourné une erreur JSON au lieu d'un ZIP
             try:
                 error_msg = response.json().get('query_status', 'Erreur inconnue')
-                print(f"        [-] Impossible de télécharger {sha256}: {error_msg}")
+                print(f"        [-] Erreur API (Quota atteint ou Fichier introuvable): {error_msg}")
             except:
                 pass
-            return False
+            return None
             
     except Exception as e:
-        print(f"        [!] Erreur lors du téléchargement de {sha256}: {e}")
-        return False
-
-def run_objdump(malware_class, class_dir):
-    """Exécute objdump sur les fichiers téléchargés et stocke les résultats"""
-    asm_dir = f"asm_{malware_class}"
-    if not os.path.exists(asm_dir):
-        os.makedirs(asm_dir)
-        
-    print(f"\n==================================================")
-    print(f"[*] ETAPE 2 : EXÉCUTION D'OBJDUMP")
-    print(f"==================================================")
-    
-    files = [f for f in os.listdir(class_dir) if os.path.isfile(os.path.join(class_dir, f))]
-    if not files:
-        print("[-] Aucun fichier à désassembler.")
-        return
-        
-    for idx, f in enumerate(files):
-        file_path = os.path.join(class_dir, f)
-        asm_path = os.path.join(asm_dir, f + ".asm")
-        
-        if os.path.exists(asm_path):
-            continue
-            
-        print(f"    [{idx+1}/{len(files)}] Désassemblage de {f}...")
-        try:
-            # Redirection des erreurs vers /dev/null pour éviter de polluer l'écran
-            # si objdump ne reconnaît pas le format du fichier (ex: script Python, archive, etc.)
-            cmd = f"objdump -d '{file_path}' > '{asm_path}' 2>/dev/null"
-            subprocess.run(cmd, shell=True)
-            
-            # Vérifier si objdump a échoué (fichier vide)
-            if os.path.exists(asm_path) and os.path.getsize(asm_path) == 0:
-                os.remove(asm_path)
-                print("        [-] Format non reconnu par objdump (ignoré).")
-        except Exception as e:
-            print(f"        [!] Erreur critique objdump: {e}")
-            
-    print(f"\n[+] Terminés ! Tous les fichiers ASM valides sont stockés dans le dossier : {os.path.abspath(asm_dir)}")
+        print(f"        [!] Erreur de téléchargement: {e}")
+        return None
 
 # ==========================================
 # MAIN
@@ -161,10 +121,9 @@ def main():
         os.makedirs(OUTPUT_BASE_DIR)
 
     print("\n==========================================")
-    print("      MALWARE DOWNLOADER & ANALYZER       ")
+    print("      MALWARE STREAM ANALYZER (SAFE)      ")
     print("==========================================")
     
-    # 1. Menu interactif
     print("\nCatégories disponibles :")
     for i, cls in enumerate(CLASSES):
         print(f"[{i+1}] {cls}")
@@ -182,13 +141,18 @@ def main():
     malware_class = CLASSES[idx]
     print(f"\n[+] Vous avez sélectionné la catégorie : {malware_class.upper()}")
     
+    # Dossier temporaire
     class_dir = os.path.join(OUTPUT_BASE_DIR, malware_class)
     if not os.path.exists(class_dir):
         os.makedirs(class_dir)
         
-    # 2. Téléchargement
+    # Dossier final pour l'ASM
+    asm_dir = f"asm_{malware_class}"
+    if not os.path.exists(asm_dir):
+        os.makedirs(asm_dir)
+        
     print(f"\n==================================================")
-    print(f"[*] ETAPE 1 : TÉLÉCHARGEMENT DES SAMPLES")
+    print(f"[*] TRAITEMENT EN CONTINU (Objectif: {SAMPLES_PER_FAMILY})")
     print(f"==================================================")
     hashes = get_hashes(malware_class, SAMPLES_PER_FAMILY)
     
@@ -198,25 +162,54 @@ def main():
         
     success_count = 0
     for i, sha256 in enumerate(hashes):
-        print(f"    [{i+1}/{len(hashes)}] Téléchargement de {sha256}...")
+        if success_count >= SAMPLES_PER_FAMILY:
+            print(f"\n[+] Objectif atteint: {SAMPLES_PER_FAMILY} malwares analysés.")
+            break
+            
+        print(f"\n    [Progression : {success_count}/{SAMPLES_PER_FAMILY}] -> Sample {sha256}")
         
-        existing_files = [f for f in os.listdir(class_dir) if sha256 in f]
-        
-        if existing_files:
-            print("        [~] Déjà présent, on passe.")
+        # Vérifier si on a déjà l'ASM pour ce malware
+        asm_path = os.path.join(asm_dir, f"{sha256}.asm")
+        if os.path.exists(asm_path) and os.path.getsize(asm_path) > 0:
+            print("        [~] L'analyse ASM existe déjà, on passe au suivant.")
             success_count += 1
             continue
             
-        if download_and_extract(sha256, class_dir):
-            print("        [+] Succès.")
-            success_count += 1
+        # 1. Télécharger et extraire
+        print("        [*] Téléchargement et extraction...")
+        extracted_file = download_and_extract(sha256, class_dir)
         
-        time.sleep(1)
+        if extracted_file and os.path.exists(extracted_file):
+            # 2. Objdump
+            print("        [*] Désassemblage (objdump)...")
+            try:
+                cmd = f"objdump -d '{extracted_file}' > '{asm_path}' 2>/dev/null"
+                subprocess.run(cmd, shell=True)
+                
+                if os.path.exists(asm_path) and os.path.getsize(asm_path) == 0:
+                    os.remove(asm_path)
+                    print("        [-] Format non reconnu par objdump (ignoré).")
+                else:
+                    print("        [+] Désassemblage réussi -> Fichier ASM sauvegardé.")
+                    success_count += 1
+            except Exception as e:
+                print(f"        [!] Erreur objdump: {e}")
+                
+            # 3. Suppression IMÉDIATE
+            print("        [*] Suppression du malware...")
+            try:
+                os.remove(extracted_file)
+                print("        [+] Malware supprimé avec succès.")
+            except Exception as e:
+                print(f"        [!] Erreur lors de la suppression: {e}")
         
-    print(f"\n[*] Bilan : {success_count} fichiers récupérés pour la classe {malware_class}.")
-    
-    # 3. Analyse avec objdump
-    run_objdump(malware_class, class_dir)
+        time.sleep(1) # Pause API pour ne pas se faire bloquer
+        
+    print(f"\n==================================================")
+    print(f"[*] BILAN : {success_count} fichiers traités pour la classe {malware_class}.")
+    print(f"[*] Les fichiers de code source (ASM) sont 100% inoffensifs et stockés ici :")
+    print(f"    -> {os.path.abspath(asm_dir)}")
+    print(f"==================================================")
 
 if __name__ == "__main__":
     main()
