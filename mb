@@ -41,7 +41,7 @@ def get_hashes(malware_class, limit):
     data = {
         'query': 'get_taginfo',
         'tag': malware_class,
-        'limit': 1000  # On demande le max pour avoir de la marge après le filtrage
+        'limit': 250  # Réduit à 250 car MalwareBazaar plante (HTTP 502) si on demande trop
     }
     
     try:
@@ -57,11 +57,10 @@ def get_hashes(malware_class, limit):
         if response_json.get('query_status') == 'ok':
             hashes = []
             for item in response_json.get('data', []):
-                # Filtrer pour ne garder que les fichiers exécutables Windows (PE)
-                mime = item.get('file_type_mime', '').lower()
+                # Filtrer strictement pour les fichiers EXE
                 ftype = item.get('file_type', '').lower()
                 
-                if 'dosexec' in mime or ftype in ['exe', 'dll']:
+                if ftype == 'exe':
                     hashes.append(item['sha256_hash'])
                     
             print(f"    [+] Trouvé {len(hashes)} samples exécutables Windows (PE).")
