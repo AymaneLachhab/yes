@@ -4,6 +4,7 @@ import pyzipper
 import time
 import sys
 import subprocess
+import base64
 
 # ==========================================
 # CONFIGURATION
@@ -12,6 +13,13 @@ import subprocess
 API_KEY = "5e5c24856d39b864896ef452436249a32024514c8f410f4d" 
 API_URL = "https://mb-api.abuse.ch/api/v1/"
 HEADERS = { 'Auth-Key': API_KEY }
+
+# --- Configuration GitHub ---
+# ⚠️ ATTENTION : Tu DOIS générer un Personal Access Token sur GitHub (Settings > Developer settings > Personal access tokens (classic))
+# Coche la case "repo" (Full control of private repositories) pour qu'il puisse uploader.
+GITHUB_TOKEN = "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" # <-- Mets ton token ici entre les guillemets !
+GITHUB_REPO = "AymaneLachhab/yes"
+GITHUB_BASE_PATH = "data_asm"
 
 # Nombre de samples à traiter par famille/classe
 SAMPLES_PER_FAMILY = 100
@@ -71,6 +79,51 @@ def get_hashes(malware_class, limit):
     except Exception as e:
         print(f"    [!] Erreur de connexion: {e}")
         return []
+
+def upload_to_github(local_file_path, malware_class, filename):
+    """Upload un fichier directement sur Github via leur API REST"""
+    if not GITHUB_TOKEN:
+        return False
+        
+    print(f"        [*] Upload vers GitHub ({GITHUB_REPO})...")
+    # Met la première lettre en majuscule (ex: ransomware -> Ransomware)
+    class_folder = malware_class.capitalize() 
+    github_path = f"{GITHUB_BASE_PATH}/{class_folder}/{filename}"
+    
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{github_path}"
+    headers = {
+        "Authorization": f"token {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    
+    try:
+        with open(local_file_path, "rb") as f:
+            content = f.read()
+        
+        # Github demande du Base64 pour le contenu des fichiers
+        encoded_content = base64.b64encode(content).decode("utf-8")
+        
+        data = {
+            "message": f"Ajout ASM automatique: {filename} ({class_folder})",
+            "content": encoded_content,
+            "branch": "main"
+        }
+        
+        response = requests.put(url, json=data, headers=headers, timeout=60)
+        
+        if response.status_code in [201, 200]:
+            print(f"        [+] Upload GitHub réussi ! ({github_path})")
+            return True
+        else:
+            print(f"        [-] Erreur GitHub API ({response.status_code})")
+            try:
+                print(f"            {response.json().get('message')}")
+            except:
+                pass
+            return False
+    except Exception as e:
+        print(f"        [!] Erreur lors de l'upload GitHub: {e}")
+        return False
 
 def download_and_extract(sha256, output_dir):
     """Télécharge le fichier ZIP depuis MalwareBazaar, l'extrait, et retourne le chemin complet du fichier extrait"""
@@ -196,6 +249,13 @@ def main():
                     print("        [-] Format non reconnu par objdump (ignoré).")
                 else:
                     print("        [+] Désassemblage réussi -> Fichier ASM sauvegardé.")
+                    
+                    # 2.5 Upload sur Github
+                    if GITHUB_TOKEN:
+                        upload_to_github(asm_path, malware_class, f"{sha256}.asm")
+                        # (Optionnel) Si tu veux supprimer le .asm de ta VM après l'avoir uploadé pour gagner de l'espace, décommente la ligne ci-dessous :
+                        # os.remove(asm_path)
+                        
                     success_count += 1
             except Exception as e:
                 print(f"        [!] Erreur objdump: {e}")
