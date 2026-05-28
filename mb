@@ -14,7 +14,7 @@ API_URL = "https://mb-api.abuse.ch/api/v1/"
 HEADERS = { 'Auth-Key': API_KEY }
 
 # Nombre de samples à télécharger par famille/classe
-SAMPLES_PER_FAMILY = 500
+SAMPLES_PER_FAMILY = 100
 
 # Dossier principal où les malwares seront classés
 OUTPUT_BASE_DIR = "malware_samples"
