@@ -10,7 +10,7 @@ import sys
 # Obtenez votre clé API gratuite en vous connectant sur https://bazaar.abuse.ch/
 API_KEY = "5e5c24856d39b864896ef452436249a32024514c8f410f4d" 
 API_URL = "https://mb-api.abuse.ch/api/v1/"
-HEADERS = { 'API-KEY': API_KEY }
+HEADERS = { 'Auth-Key': API_KEY }
 
 # Nombre de samples à télécharger par famille
 SAMPLES_PER_FAMILY = 2000
