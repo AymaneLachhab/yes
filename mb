@@ -1,0 +1,156 @@
+import os
+import requests
+import pyzipper
+import time
+import sys
+
+# ==========================================
+# CONFIGURATION
+# ==========================================
+# Obtenez votre clé API gratuite en vous connectant sur https://bazaar.abuse.ch/
+API_KEY = "5e5c24856d39b864896ef452436249a32024514c8f410f4d" 
+API_URL = "https://mb-api.abuse.ch/api/v1/"
+HEADERS = { 'API-KEY': API_KEY }
+
+# Nombre de samples à télécharger par famille
+SAMPLES_PER_FAMILY = 2000
+
+# Dossier principal où les malwares seront classés
+OUTPUT_BASE_DIR = "malware_samples"
+
+# Liste des familles populaires à télécharger
+FAMILIES = [
+    "Emotet",
+    "AgentTesla",
+    "RedLineStealer",
+    "Formbook",
+    "Remcos",
+    "AsyncRAT",
+    "Qakbot",
+    "CobaltStrike",
+    "LockBit",
+    "Mirai"
+]
+
+# ==========================================
+# FONCTIONS
+# ==========================================
+def get_hashes(family, limit):
+    """Récupère une liste de hash SHA256 pour une famille donnée"""
+    print(f"[*] Recherche de {limit} samples pour la famille: {family}...")
+    data = {
+        'query': 'get_siginfo',
+        'signature': family,
+        'limit': limit
+    }
+    
+    try:
+        response = requests.post(API_URL, data=data, timeout=15)
+        response_json = response.json()
+        
+        if response_json.get('query_status') == 'ok':
+            hashes = [item['sha256_hash'] for item in response_json.get('data', [])]
+            print(f"    [+] Trouvé {len(hashes)} samples.")
+            return hashes
+        else:
+            print(f"    [-] Erreur API ou aucun sample trouvé: {response_json.get('query_status')}")
+            return []
+    except Exception as e:
+        print(f"    [!] Erreur de connexion: {e}")
+        return []
+
+def download_and_extract(sha256, output_dir):
+    """Télécharge le fichier ZIP chiffré depuis MalwareBazaar et l'extrait"""
+    data = {
+        'query': 'get_file',
+        'sha256_hash': sha256
+    }
+    
+    try:
+        response = requests.post(API_URL, data=data, headers=HEADERS, timeout=30)
+        
+        if 'application/zip' in response.headers.get('Content-Type', ''):
+            zip_path = os.path.join(output_dir, f"{sha256}.zip")
+            
+            # Sauvegarde du fichier ZIP
+            with open(zip_path, 'wb') as f:
+                f.write(response.content)
+            
+            # Extraction du ZIP (le mot de passe MalwareBazaar est toujours 'infected')
+            try:
+                with pyzipper.AESZipFile(zip_path) as zf:
+                    zf.extractall(path=output_dir, pwd=b'infected')
+                
+                # Suppression du ZIP une fois extrait pour gagner de la place
+                os.remove(zip_path)
+                return True
+            except Exception as e:
+                print(f"        [!] Erreur d'extraction pour {sha256}: {e}")
+                if os.path.exists(zip_path):
+                    os.remove(zip_path)
+                return False
+        else:
+            # L'API a peut-être retourné une erreur JSON au lieu d'un ZIP
+            try:
+                error_msg = response.json().get('query_status', 'Erreur inconnue')
+                print(f"        [-] Impossible de télécharger {sha256}: {error_msg}")
+            except:
+                pass
+            return False
+            
+    except Exception as e:
+        print(f"        [!] Erreur lors du téléchargement de {sha256}: {e}")
+        return False
+
+# ==========================================
+# MAIN
+# ==========================================
+def main():
+    if API_KEY == "VOTRE_CLE_API_ICI":
+        print("[!] ERREUR: Vous devez d'abord mettre votre clé API dans le script !")
+        print("    1. Allez sur https://bazaar.abuse.ch/")
+        print("    2. Connectez-vous (en haut à droite via Twitter/Google)")
+        print("    3. Allez dans 'API' pour récupérer votre clé")
+        sys.exit(1)
+
+    if not os.path.exists(OUTPUT_BASE_DIR):
+        os.makedirs(OUTPUT_BASE_DIR)
+
+    total_downloaded = 0
+
+    for family in FAMILIES:
+        family_dir = os.path.join(OUTPUT_BASE_DIR, family)
+        if not os.path.exists(family_dir):
+            os.makedirs(family_dir)
+            
+        hashes = get_hashes(family, SAMPLES_PER_FAMILY)
+        
+        success_count = 0
+        for i, sha256 in enumerate(hashes):
+            print(f"    [{i+1}/{len(hashes)}] Téléchargement de {sha256}...")
+            
+            # Vérifier si on ne l'a pas déjà téléchargé
+            existing_files = [f for f in os.listdir(family_dir) if sha256 in f]
+            
+            if existing_files:
+                print("        [~] Déjà présent, on passe.")
+                success_count += 1
+                continue
+                
+            if download_and_extract(sha256, family_dir):
+                print("        [+] Succès.")
+                success_count += 1
+                total_downloaded += 1
+            
+            # Petite pause pour ne pas surcharger l'API
+            time.sleep(1)
+            
+        print(f"[*] Bilan pour {family} : {success_count} fichiers récupérés sur {len(hashes)}.\n")
+
+    print(f"==================================================")
+    print(f"TERMINÉ ! Total de nouveaux samples téléchargés : {total_downloaded}")
+    print(f"Tous les fichiers sont rangés dans le dossier : {os.path.abspath(OUTPUT_BASE_DIR)}")
+    print(f"==================================================")
+
+if __name__ == "__main__":
+    main()
