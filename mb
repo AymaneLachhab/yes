@@ -45,7 +45,8 @@ def get_hashes(malware_class, limit):
     }
     
     try:
-        response = requests.post(API_URL, data=data, headers=HEADERS, timeout=15)
+        # Augmentation du timeout à 60 secondes car MalwareBazaar met du temps à renvoyer 1000 résultats
+        response = requests.post(API_URL, data=data, headers=HEADERS, timeout=60)
         response_json = response.json()
         
         if response_json.get('query_status') == 'ok':
