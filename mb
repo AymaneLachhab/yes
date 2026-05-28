@@ -17,7 +17,7 @@ HEADERS = { 'Auth-Key': API_KEY }
 # --- Configuration GitHub ---
 # ⚠️ ATTENTION : Tu DOIS générer un Personal Access Token sur GitHub (Settings > Developer settings > Personal access tokens (classic))
 # Coche la case "repo" (Full control of private repositories) pour qu'il puisse uploader.
-GITHUB_TOKEN = "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" # <-- Mets ton token ici entre les guillemets !
+GITHUB_TOKEN = "ghp_v2e70raloIOr4pe7I3HdIAXQaTmTjZ1ZgJ77Q" # <-- Mets ton token ici entre les guillemets !
 GITHUB_REPO = "AymaneLachhab/yes"
 GITHUB_BASE_PATH = "data_asm"
 
