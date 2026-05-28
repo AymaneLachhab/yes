@@ -46,8 +46,14 @@ def get_hashes(malware_class, limit):
     
     try:
         response = requests.post(API_URL, data=data, headers=HEADERS, timeout=60)
-        response_json = response.json()
         
+        try:
+            response_json = response.json()
+        except ValueError:
+            # Si l'API renvoie du HTML (erreur Cloudflare, Rate Limit, etc.) au lieu du JSON
+            print(f"    [!] L'API n'a pas renvoyé de JSON. Code d'erreur HTTP: {response.status_code}")
+            return []
+            
         if response_json.get('query_status') == 'ok':
             hashes = []
             for item in response_json.get('data', []):
