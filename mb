@@ -6,6 +6,10 @@ import sys
 import subprocess
 import base64
 import concurrent.futures
+import threading
+
+# Lock global pour éviter les erreurs 409 Conflict sur GitHub
+github_upload_lock = threading.Lock()
 
 # ==========================================
 # CONFIGURATION
@@ -73,7 +77,7 @@ def get_hashes(malware_class, limit):
                 if ftype in ('exe', 'dll', 'sys', 'ocx', 'scr', 'cpl', 'drv', 'msi'):
                     hashes.append(item['sha256_hash'])
                     
-            print(f"    [+] Trouvé {len(hashes)} samples PE Windows (EXE+DLL).")
+            print(f"    [+] Trouvé {len(hashes)} samples PE Windows (Tous types PE).")
             if len(hashes) < SAMPLES_PER_FAMILY:
                 print(f"    [!] Attention : seulement {len(hashes)} disponibles (objectif: {SAMPLES_PER_FAMILY})")
             return hashes
@@ -120,18 +124,30 @@ def upload_to_github(local_file_path, malware_class, filename):
             "branch": "main"
         }
         
-        response = requests.put(url, json=data, headers=headers, timeout=60)
+        max_retries = 3
+        for attempt in range(max_retries):
+            # On bloque les autres threads pour ne pas envoyer d'uploads simultanés (cause de l'Erreur 409)
+            with github_upload_lock:
+                response = requests.put(url, json=data, headers=headers, timeout=60)
+                
+            if response.status_code in [201, 200]:
+                print(f"        [+] Upload GitHub réussi ! ({github_path})")
+                return True
+            elif response.status_code == 409: # Conflict (HEAD a bougé)
+                print(f"        [!] Erreur 409 GitHub (Conflit). Essai {attempt+1}/{max_retries}...")
+                time.sleep(2) # Pause avant de réessayer
+                continue
+            else:
+                print(f"        [-] Erreur GitHub API ({response.status_code})")
+                try:
+                    print(f"            {response.json().get('message')}")
+                except:
+                    pass
+                return False
+                
+        print(f"        [-] Échec de l'upload après {max_retries} tentatives.")
+        return False
         
-        if response.status_code in [201, 200]:
-            print(f"        [+] Upload GitHub réussi ! ({github_path})")
-            return True
-        else:
-            print(f"        [-] Erreur GitHub API ({response.status_code})")
-            try:
-                print(f"            {response.json().get('message')}")
-            except:
-                pass
-            return False
     except Exception as e:
         print(f"        [!] Erreur lors de l'upload GitHub: {e}")
         return False
