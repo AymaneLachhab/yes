@@ -84,10 +84,13 @@ def get_hashes(malware_class, limit):
             
             hashes_with_source = [(h, 'mb') for h in hashes]
             
-            # Si on n'a pas assez de samples, on complète avec Filescan.io
-            if len(hashes_with_source) < SAMPLES_PER_FAMILY and FILESCAN_API_KEY:
-                missing = 1000 - len(hashes_with_source) # On cherche plus large
-                print(f"    [!] Pas assez de samples sur MalwareBazaar. Recherche complémentaire sur Filescan.io...")
+            # On veut au moins le double de samples que l'objectif, car beaucoup seront rejetés (>45 Mo, échec objdump, etc.)
+            MIN_HASHES_NEEDED = SAMPLES_PER_FAMILY * 2
+            
+            # Si on n'a pas assez de samples pour assurer l'objectif, on complète avec Filescan.io
+            if len(hashes_with_source) < MIN_HASHES_NEEDED and FILESCAN_API_KEY:
+                missing = 1000 - len(hashes_with_source) # On cherche large pour avoir du choix
+                print(f"    [!] Moins de {MIN_HASHES_NEEDED} samples trouvés. Recherche complémentaire sur Filescan.io pour assurer le coup...")
                 fs_hashes = get_filescan_hashes(malware_class, missing)
                 
                 # Éviter les doublons
