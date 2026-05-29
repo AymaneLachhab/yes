@@ -1,0 +1,11 @@
+PE Windows :
+
+Type	||  Description
+exe	  ||  Exécutable
+dll	  ||  Dynamic Link Library
+sys	  ||  Driver kernel
+ocx	  ||  ActiveX Control
+scr	  ||  Screensaver
+cpl	  ||  Control Panel
+drv	  ||  Driver
+msi	  ||  Windows Installer
