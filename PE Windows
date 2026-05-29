@@ -1,6 +1,6 @@
 PE Windows :
 
-Type	||  Description
+Type  ||  Description
 exe	  ||  Exécutable
 dll	  ||  Dynamic Link Library
 sys	  ||  Driver kernel
