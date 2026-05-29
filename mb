@@ -65,13 +65,15 @@ def get_hashes(malware_class, limit):
         if response_json.get('query_status') == 'ok':
             hashes = []
             for item in response_json.get('data', []):
-                # Filtrer strictement pour les fichiers EXE
+                # Filtrer pour TOUS les fichiers PE Windows
                 ftype = item.get('file_type', '').lower()
                 
-                if ftype == 'exe':
+                if ftype in ('exe', 'dll', 'sys', 'ocx', 'scr', 'cpl', 'drv', 'msi'):
                     hashes.append(item['sha256_hash'])
                     
-            print(f"    [+] Trouvé {len(hashes)} samples exécutables Windows (PE).")
+            print(f"    [+] Trouvé {len(hashes)} samples PE Windows (EXE+DLL).")
+            if len(hashes) < SAMPLES_PER_FAMILY:
+                print(f"    [!] Attention : seulement {len(hashes)} disponibles (objectif: {SAMPLES_PER_FAMILY})")
             return hashes
         else:
             print(f"    [-] Erreur API ou aucun sample trouvé: {response_json.get('query_status')}")
@@ -190,107 +192,120 @@ def main():
     print("==========================================")
     
     print("\nCatégories disponibles :")
+    print("[0] TOUTES les catégories")
     for i, cls in enumerate(CLASSES):
         print(f"[{i+1}] {cls}")
         
     try:
-        choix = input(f"\n>>> Choisissez le numéro de la catégorie (1-{len(CLASSES)}) : ")
-        idx = int(choix) - 1
-        if idx < 0 or idx >= len(CLASSES):
-            print("[-] Choix invalide.")
+        choix = input(f"\n>>> Choisissez les numéros séparés par des virgules (ex: 1,3) ou 0 pour TOUT : ")
+        
+        selected_classes = []
+        if choix.strip() == '0':
+            selected_classes = CLASSES
+        else:
+            indices = [int(x.strip()) - 1 for x in choix.split(',')]
+            for idx in indices:
+                if 0 <= idx < len(CLASSES):
+                    selected_classes.append(CLASSES[idx])
+                else:
+                    print(f"[-] Choix invalide ignoré: {idx + 1}")
+                    
+        if not selected_classes:
+            print("[-] Aucune catégorie valide sélectionnée.")
             return
-    except ValueError:
-        print("[-] Veuillez entrer un numéro valide.")
-        return
-        
-    malware_class = CLASSES[idx]
-    print(f"\n[+] Vous avez sélectionné la catégorie : {malware_class.upper()}")
-    
-    # Dossier temporaire
-    class_dir = os.path.join(OUTPUT_BASE_DIR, malware_class)
-    if not os.path.exists(class_dir):
-        os.makedirs(class_dir)
-        
-    # Dossier final pour l'ASM
-    asm_dir = f"asm_{malware_class}"
-    if not os.path.exists(asm_dir):
-        os.makedirs(asm_dir)
-        
-    print(f"\n==================================================")
-    print(f"[*] TRAITEMENT EN CONTINU (Objectif: {SAMPLES_PER_FAMILY})")
-    print(f"==================================================")
-    hashes = get_hashes(malware_class, 1000)
-    
-    if not hashes:
-        print("[-] Aucun sample trouvé. Fin du script.")
-        return
-        
-    success_count = 0
-    for i, sha256 in enumerate(hashes):
-        if success_count >= SAMPLES_PER_FAMILY:
-            print(f"\n[+] Objectif atteint: {SAMPLES_PER_FAMILY} malwares analysés.")
-            break
             
-        print(f"\n    [Progression : {success_count}/{SAMPLES_PER_FAMILY}] -> Sample {sha256}")
+    except ValueError:
+        print("[-] Veuillez entrer des numéros valides.")
+        return
         
-        # Vérifier si on a déjà traité ce malware
-        asm_path = os.path.join(asm_dir, f"{sha256}.asm")
-        if os.path.exists(asm_path):
-            print("        [~] L'analyse a déjà été faite (uploadée sur GitHub), on passe.")
-            success_count += 1
+    print(f"\n[+] Catégories sélectionnées : {', '.join(selected_classes).upper()}")
+    
+    for malware_class in selected_classes:
+        print(f"\n\n{'='*50}")
+        print(f"[*] TRAITEMENT DE LA CATÉGORIE : {malware_class.upper()}")
+        print(f"{'='*50}")
+        
+        # Dossier temporaire
+        class_dir = os.path.join(OUTPUT_BASE_DIR, malware_class)
+        if not os.path.exists(class_dir):
+            os.makedirs(class_dir)
+            
+        # Dossier final pour l'ASM
+        asm_dir = f"asm_{malware_class}"
+        if not os.path.exists(asm_dir):
+            os.makedirs(asm_dir)
+            
+        print(f"\n[*] Objectif: {SAMPLES_PER_FAMILY} samples")
+        hashes = get_hashes(malware_class, 1000)
+        
+        if not hashes:
+            print(f"[-] Aucun sample trouvé pour {malware_class}. On passe à la suite.")
             continue
             
-        # 1. Télécharger et extraire
-        print("        [*] Téléchargement et extraction...")
-        extracted_file = download_and_extract(sha256, class_dir)
-        
-        if extracted_file and os.path.exists(extracted_file):
-            # 2. Objdump
-            print("        [*] Désassemblage (objdump)...")
-            try:
-                cmd = f"objdump -d '{extracted_file}' > '{asm_path}' 2>/dev/null"
-                subprocess.run(cmd, shell=True)
+        success_count = 0
+        for i, sha256 in enumerate(hashes):
+            if success_count >= SAMPLES_PER_FAMILY:
+                print(f"\n[+] Objectif atteint pour {malware_class}: {SAMPLES_PER_FAMILY} malwares analysés.")
+                break
                 
-                if os.path.exists(asm_path) and os.path.getsize(asm_path) == 0:
-                    os.remove(asm_path)
-                    print("        [-] Format non reconnu par objdump (ignoré).")
-                else:
-                    print("        [+] Désassemblage réussi -> Fichier ASM sauvegardé.")
+            print(f"\n    [Progression {malware_class} : {success_count}/{SAMPLES_PER_FAMILY}] -> Sample {sha256}")
+            
+            # Vérifier si on a déjà traité ce malware
+            asm_path = os.path.join(asm_dir, f"{sha256}.asm")
+            if os.path.exists(asm_path):
+                print("        [~] L'analyse a déjà été faite (uploadée sur GitHub), on passe.")
+                success_count += 1
+                continue
+                
+            # 1. Télécharger et extraire
+            print("        [*] Téléchargement et extraction...")
+            extracted_file = download_and_extract(sha256, class_dir)
+            
+            if extracted_file and os.path.exists(extracted_file):
+                # 2. Objdump
+                print("        [*] Désassemblage (objdump)...")
+                try:
+                    cmd = f"objdump -d '{extracted_file}' > '{asm_path}' 2>/dev/null"
+                    subprocess.run(cmd, shell=True)
                     
-                    # 2.5 Upload sur Github
-                    if GITHUB_TOKEN:
-                        upload_success = upload_to_github(asm_path, malware_class, f"{sha256}.asm")
-                        
-                        # Si l'upload a échoué (souvent à cause de la taille > 45Mo), 
-                        # on ne compte PAS ce malware comme un succès, pour que la boucle 
-                        # en cherche un autre plus petit à la place.
-                        if upload_success:
-                            success_count += 1
-                        
-                        # Quoi qu'il arrive (succès ou fichier trop gros), on supprime le .asm
-                        # pour ne pas remplir le disque dur local de la VM.
-                        if os.path.exists(asm_path):
-                            os.remove(asm_path)
+                    if os.path.exists(asm_path) and os.path.getsize(asm_path) == 0:
+                        os.remove(asm_path)
+                        print("        [-] Format non reconnu par objdump (ignoré).")
                     else:
-                        success_count += 1
-            except Exception as e:
-                print(f"        [!] Erreur objdump: {e}")
-                
-            # 3. Suppression IMÉDIATE
-            print("        [*] Suppression du malware...")
-            try:
-                os.remove(extracted_file)
-                print("        [+] Malware supprimé avec succès.")
-            except Exception as e:
-                print(f"        [!] Erreur lors de la suppression: {e}")
-        
-        time.sleep(1) # Pause API pour ne pas se faire bloquer
-        
-    print(f"\n==================================================")
-    print(f"[*] BILAN : {success_count} fichiers traités pour la classe {malware_class}.")
-    print(f"[*] Les fichiers de code source (ASM) sont 100% inoffensifs et stockés ici :")
-    print(f"    -> {os.path.abspath(asm_dir)}")
-    print(f"==================================================")
+                        print("        [+] Désassemblage réussi -> Fichier ASM sauvegardé.")
+                        
+                        # 2.5 Upload sur Github
+                        if GITHUB_TOKEN:
+                            upload_success = upload_to_github(asm_path, malware_class, f"{sha256}.asm")
+                            
+                            # Si l'upload a échoué (souvent à cause de la taille > 45Mo), 
+                            # on ne compte PAS ce malware comme un succès.
+                            if upload_success:
+                                success_count += 1
+                            
+                            # Quoi qu'il arrive on supprime le .asm local
+                            if os.path.exists(asm_path):
+                                os.remove(asm_path)
+                        else:
+                            success_count += 1
+                except Exception as e:
+                    print(f"        [!] Erreur objdump: {e}")
+                    
+                # 3. Suppression IMÉDIATE
+                print("        [*] Suppression du malware...")
+                try:
+                    os.remove(extracted_file)
+                    print("        [+] Malware supprimé avec succès.")
+                except Exception as e:
+                    print(f"        [!] Erreur lors de la suppression: {e}")
+            
+            time.sleep(1) # Pause API pour ne pas se faire bloquer
+            
+        print(f"\n==================================================")
+        print(f"[*] BILAN : {success_count} fichiers traités pour la classe {malware_class}.")
+        print(f"[*] Les fichiers de code source (ASM) sont stockés ici :")
+        print(f"    -> {os.path.abspath(asm_dir)}")
+        print(f"==================================================")
 
 if __name__ == "__main__":
     main()
