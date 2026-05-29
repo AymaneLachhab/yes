@@ -22,7 +22,7 @@ GITHUB_REPO = "AymaneLachhab/yes"
 GITHUB_BASE_PATH = "data_asm"
 
 # Nombre de samples à traiter par famille/classe
-SAMPLES_PER_FAMILY = 1000
+SAMPLES_PER_FAMILY = 100
 
 # Dossier temporaire pour les malwares (ils seront supprimés aussitôt)
 OUTPUT_BASE_DIR = "malware_samples"
@@ -219,7 +219,7 @@ def main():
     print(f"\n==================================================")
     print(f"[*] TRAITEMENT EN CONTINU (Objectif: {SAMPLES_PER_FAMILY})")
     print(f"==================================================")
-    hashes = get_hashes(malware_class, SAMPLES_PER_FAMILY)
+    hashes = get_hashes(malware_class, 1000)
     
     if not hashes:
         print("[-] Aucun sample trouvé. Fin du script.")
